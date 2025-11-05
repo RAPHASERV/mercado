@@ -1,0 +1,556 @@
+# mercado
+import tkinter as tk
+from tkinter import ttk, messagebox
+from sqlalchemy.orm import Session
+from services import ProdutoService, VendaService, FinanceiroService
+from database import SessionLocal, Base, engine
+
+class MercadoApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Sistema de Gestão de Mercado")
+        self.geometry("1200x800")
+
+        self.db = SessionLocal()
+        self.produto_service = ProdutoService(self.db)
+        self.venda_service = VendaService(self.db)
+        self.financeiro_service = FinanceiroService(self.db)
+
+        self.create_widgets()
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def on_closing(self):
+        self.db.close()
+        self.destroy()
+
+    def create_widgets(self):
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(expand=True, fill="both", padx=10, pady=10)
+
+        # Aba de Produtos
+        self.produtos_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.produtos_frame, text="Produtos")
+        self.create_produtos_tab(self.produtos_frame)
+
+        # Aba de Vendas
+        self.vendas_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.vendas_frame, text="Vendas")
+        self.create_vendas_tab(self.vendas_frame)
+
+        # Aba de Estoque
+        self.estoque_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.estoque_frame, text="Estoque")
+        self.create_estoque_tab(self.estoque_frame)
+
+        # Aba Financeiro
+        self.financeiro_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.financeiro_frame, text="Financeiro")
+        self.create_financeiro_tab(self.financeiro_frame)
+
+    def create_produtos_tab(self, parent_frame):
+        # Frame para entrada de dados
+        input_frame = ttk.LabelFrame(parent_frame, text="Cadastro/Edição de Produtos")
+        input_frame.pack(pady=10, padx=10, fill="x")
+
+        # Campos de entrada
+        fields = ["Nome", "Descrição", "Preço Custo", "Preço Venda", "Código Barras", "Categoria", "Estoque Inicial"]
+        self.product_entries = {}
+        for i, field in enumerate(fields):
+            ttk.Label(input_frame, text=f"{field}:").grid(row=i, column=0, padx=5, pady=2, sticky="w")
+            entry = ttk.Entry(input_frame)
+            entry.grid(row=i, column=1, padx=5, pady=2, sticky="ew")
+            self.product_entries[field] = entry
+        
+        input_frame.grid_columnconfigure(1, weight=1)
+
+        # Botões de ação
+        btn_frame = ttk.Frame(input_frame)
+        btn_frame.grid(row=len(fields), column=0, columnspan=2, pady=10)
+        ttk.Button(btn_frame, text="Adicionar Produto", command=self.add_produto).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="Atualizar Produto", command=self.update_produto).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="Limpar Campos", command=self.clear_product_entries).pack(side="left", padx=5)
+
+        # Frame para a lista de produtos
+        list_frame = ttk.LabelFrame(parent_frame, text="Produtos Cadastrados")
+        list_frame.pack(pady=10, padx=10, fill="both", expand=True)
+
+        self.product_tree = ttk.Treeview(list_frame, columns=("ID", "Nome", "Preço Custo", "Preço Venda", "Estoque", "Categoria", "Código Barras"), show="headings")
+        self.product_tree.pack(fill="both", expand=True)
+
+        for col in self.product_tree["columns"]:
+            self.product_tree.heading(col, text=col)
+            self.product_tree.column(col, width=100, anchor="center")
+        
+        self.product_tree.column("ID", width=50)
+        self.product_tree.column("Nome", width=150)
+        self.product_tree.column("Preço Custo", width=100)
+        self.product_tree.column("Preço Venda", width=100)
+        self.product_tree.column("Estoque", width=70)
+        self.product_tree.column("Categoria", width=100)
+        self.product_tree.column("Código Barras", width=150)
+
+        self.product_tree.bind("<Double-1>", self.load_product_to_entries)
+
+        ttk.Button(list_frame, text="Excluir Produto Selecionado", command=self.delete_produto).pack(pady=5)
+
+        self.load_products_to_tree()
+
+    def clear_product_entries(self):
+        for entry in self.product_entries.values():
+            entry.delete(0, tk.END)
+
+    def load_products_to_tree(self):
+        for i in self.product_tree.get_children():
+            self.product_tree.delete(i)
+        products = self.produto_service.get_produtos()
+        for p in products:
+            self.product_tree.insert("", "end", iid=p.id, values=(p.id, p.nome, f"{p.preco_custo:.2f}", f"{p.preco_venda:.2f}", p.estoque, p.categoria, p.codigo_barras))
+
+    def add_produto(self):
+        try:
+            nome = self.product_entries["Nome"].get()
+            descricao = self.product_entries["Descrição"].get()
+            preco_custo = float(self.product_entries["Preço Custo"].get())
+            preco_venda = float(self.product_entries["Preço Venda"].get())
+            codigo_barras = self.product_entries["Código Barras"].get() or None
+            categoria = self.product_entries["Categoria"].get() or None
+            estoque_inicial = int(self.product_entries["Estoque Inicial"].get() or 0)
+
+            if not nome or preco_custo < 0 or preco_venda < 0:
+                messagebox.showerror("Erro", "Nome, Preço Custo e Preço Venda são obrigatórios e devem ser valores válidos.")
+                return
+
+            self.produto_service.criar_produto(nome, preco_custo, preco_venda, descricao, codigo_barras, categoria, estoque_inicial)
+            messagebox.showinfo("Sucesso", "Produto adicionado com sucesso!")
+            self.clear_product_entries()
+            self.load_products_to_tree()
+        except ValueError as e:
+            messagebox.showerror("Erro de Validação", str(e))
+        except Exception as e:
+            messagebox.showerror("Erro", f"Ocorreu um erro: {e}")
+
+    def update_produto(self):
+        selected_item = self.product_tree.focus()
+        if not selected_item:
+            messagebox.showwarning("Aviso", "Selecione um produto para atualizar.")
+            return
+        
+        produto_id = self.product_tree.item(selected_item, "values")[0]
+
+        try:
+            nome = self.product_entries["Nome"].get()
+            descricao = self.product_entries["Descrição"].get()
+            preco_custo = float(self.product_entries["Preço Custo"].get())
+            preco_venda = float(self.product_entries["Preço Venda"].get())
+            codigo_barras = self.product_entries["Código Barras"].get() or None
+            categoria = self.product_entries["Categoria"].get() or None
+
+            if not nome or preco_custo < 0 or preco_venda < 0:
+                messagebox.showerror("Erro", "Nome, Preço Custo e Preço Venda são obrigatórios e devem ser valores válidos.")
+                return
+
+            self.produto_service.atualizar_produto(produto_id, nome, descricao, preco_custo, preco_venda, codigo_barras, categoria)
+            messagebox.showinfo("Sucesso", "Produto atualizado com sucesso!")
+            self.clear_product_entries()
+            self.load_products_to_tree()
+        except ValueError as e:
+            messagebox.showerror("Erro de Validação", str(e))
+        except Exception as e:
+            messagebox.showerror("Erro", f"Ocorreu um erro: {e}")
+
+    def delete_produto(self):
+        selected_item = self.product_tree.focus()
+        if not selected_item:
+            messagebox.showwarning("Aviso", "Selecione um produto para excluir.")
+            return
+        
+        produto_id = self.product_tree.item(selected_item, "values")[0]
+        if messagebox.askyesno("Confirmação", f"Tem certeza que deseja excluir o produto ID {produto_id}?"):
+            if self.produto_service.deletar_produto(produto_id):
+                messagebox.showinfo("Sucesso", "Produto excluído com sucesso!")
+                self.load_products_to_tree()
+                self.clear_product_entries()
+            else:
+                messagebox.showerror("Erro", "Não foi possível excluir o produto.")
+
+    def load_product_to_entries(self, event):
+        selected_item = self.product_tree.focus()
+        if selected_item:
+            values = self.product_tree.item(selected_item, "values")
+            self.clear_product_entries()
+            self.product_entries["Nome"].insert(0, values[1])
+            self.product_entries["Descrição"].insert(0, "") # Descrição não está na treeview, precisa ser carregada do DB se necessário
+            self.product_entries["Preço Custo"].insert(0, values[2])
+            self.product_entries["Preço Venda"].insert(0, values[3])
+            self.product_entries["Código Barras"].insert(0, values[6])
+            self.product_entries["Categoria"].insert(0, values[5])
+            self.product_entries["Estoque Inicial"].insert(0, values[4]) # Estoque atual
+
+    def create_vendas_tab(self, parent_frame):
+        # Frame para entrada de dados da venda
+        input_frame = ttk.LabelFrame(parent_frame, text="Registrar Nova Venda")
+        input_frame.pack(pady=10, padx=10, fill="x")
+
+        # Campos para adicionar item à venda
+        ttk.Label(input_frame, text="ID Produto ou Código Barras:").grid(row=0, column=0, padx=5, pady=2, sticky="w")
+        self.venda_produto_id_entry = ttk.Entry(input_frame)
+        self.venda_produto_id_entry.grid(row=0, column=1, padx=5, pady=2, sticky="ew")
+
+        ttk.Label(input_frame, text="Quantidade:").grid(row=1, column=0, padx=5, pady=2, sticky="w")
+        self.venda_quantidade_entry = ttk.Entry(input_frame)
+        self.venda_quantidade_entry.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
+
+        ttk.Button(input_frame, text="Adicionar Item", command=self.add_item_to_venda).grid(row=2, column=0, columnspan=2, pady=5)
+
+        # Treeview para itens da venda atual
+        itens_venda_frame = ttk.LabelFrame(parent_frame, text="Itens da Venda Atual")
+        itens_venda_frame.pack(pady=10, padx=10, fill="both", expand=True)
+
+        self.current_sale_items_tree = ttk.Treeview(itens_venda_frame, columns=("ID Produto", "Nome", "Quantidade", "Preço Unitário", "Subtotal"), show="headings")
+        self.current_sale_items_tree.pack(fill="both", expand=True)
+
+        for col in self.current_sale_items_tree["columns"]:
+            self.current_sale_items_tree.heading(col, text=col)
+            self.current_sale_items_tree.column(col, width=100, anchor="center")
+        
+        self.current_sale_items_tree.column("Nome", width=150)
+
+        self.current_sale_items = [] # Lista para armazenar os itens da venda atual
+
+        # Total da venda e botão de finalizar
+        total_frame = ttk.Frame(parent_frame)
+        total_frame.pack(pady=10, padx=10, fill="x")
+
+        ttk.Label(total_frame, text="Total da Venda:").pack(side="left")
+        self.venda_total_label = ttk.Label(total_frame, text="R$ 0.00", font=("Arial", 14, "bold"))
+        self.venda_total_label.pack(side="left", padx=10)
+
+        ttk.Button(total_frame, text="Finalizar Venda", command=self.finalizar_venda).pack(side="right", padx=5)
+        ttk.Button(total_frame, text="Cancelar Venda", command=self.cancelar_venda).pack(side="right", padx=5)
+
+        # Histórico de Vendas
+        historico_vendas_frame = ttk.LabelFrame(parent_frame, text="Histórico de Vendas")
+        historico_vendas_frame.pack(pady=10, padx=10, fill="both", expand=True)
+
+        self.historico_vendas_tree = ttk.Treeview(historico_vendas_frame, columns=("ID Venda", "Data/Hora", "Total"), show="headings")
+        self.historico_vendas_tree.pack(fill="both", expand=True)
+
+        for col in self.historico_vendas_tree["columns"]:
+            self.historico_vendas_tree.heading(col, text=col)
+            self.historico_vendas_tree.column(col, width=150, anchor="center")
+        
+        self.historico_vendas_tree.column("ID Venda", width=70)
+        self.historico_vendas_tree.column("Data/Hora", width=200)
+
+        self.load_historico_vendas_to_tree()
+
+    def add_item_to_venda(self):
+        produto_identifier = self.venda_produto_id_entry.get()
+        quantidade_str = self.venda_quantidade_entry.get()
+
+        if not produto_identifier or not quantidade_str:
+            messagebox.showwarning("Aviso", "Preencha o ID/Código de Barras e a Quantidade.")
+            return
+
+        try:
+            quantidade = int(quantidade_str)
+            if quantidade <= 0:
+                raise ValueError("Quantidade deve ser maior que zero.")
+
+            produto = None
+            if produto_identifier.isdigit(): # Assume que é ID se for numérico
+                produto = self.produto_service.get_produto(int(produto_identifier))
+            else:
+                produto = self.produto_service.get_produto_by_codigo_barras(produto_identifier)
+            
+            if not produto:
+                messagebox.showerror("Erro", "Produto não encontrado.")
+                return
+
+            if produto.estoque < quantidade:
+                messagebox.showerror("Erro", f"Estoque insuficiente para {produto.nome}. Disponível: {produto.estoque}")
+                return
+            
+            # Verificar se o item já está na lista para atualizar a quantidade
+            found = False
+            for item in self.current_sale_items:
+                if item["produto_id"] == produto.id:
+                    item["quantidade"] += quantidade
+                    item["subtotal"] = item["quantidade"] * produto.preco_venda
+                    found = True
+                    break
+            
+            if not found:
+                self.current_sale_items.append({
+                    "produto_id": produto.id,
+                    "nome": produto.nome,
+                    "quantidade": quantidade,
+                    "preco_unitario": produto.preco_venda,
+                    "subtotal": quantidade * produto.preco_venda
+                })
+            
+            self.update_current_sale_tree()
+            self.venda_produto_id_entry.delete(0, tk.END)
+            self.venda_quantidade_entry.delete(0, tk.END)
+
+        except ValueError as e:
+            messagebox.showerror("Erro de Validação", str(e))
+        except Exception as e:
+            messagebox.showerror("Erro", f"Ocorreu um erro: {e}")
+
+    def update_current_sale_tree(self):
+        for i in self.current_sale_items_tree.get_children():
+            self.current_sale_items_tree.delete(i)
+        
+        total = 0.0
+        for item in self.current_sale_items:
+            self.current_sale_items_tree.insert("", "end", values=(
+                item["produto_id"],
+                item["nome"],
+                item["quantidade"],
+                f"{item["preco_unitario"]:.2f}",
+                f"{item["subtotal"]:.2f}"
+            ))
+            total += item["subtotal"]
+        self.venda_total_label.config(text=f"R$ {total:.2f}")
+
+    def finalizar_venda(self):
+        if not self.current_sale_items:
+            messagebox.showwarning("Aviso", "Adicione itens à venda antes de finalizar.")
+            return
+        
+        try:
+            # Preparar os itens para o service
+            itens_para_service = [{
+                "produto_id": item["produto_id"],
+                "quantidade": item["quantidade"]
+            } for item in self.current_sale_items]
+
+            venda = self.venda_service.registrar_venda(itens_para_service)
+            messagebox.showinfo("Sucesso", f"Venda ID {venda.id} registrada com sucesso! Total: R$ {venda.total_venda:.2f}")
+            self.current_sale_items = []
+            self.update_current_sale_tree()
+            self.load_products_to_tree() # Atualizar estoque na aba de produtos
+            self.load_historico_vendas_to_tree()
+        except ValueError as e:
+            messagebox.showerror("Erro de Venda", str(e))
+        except Exception as e:
+            messagebox.showerror("Erro", f"Ocorreu um erro ao finalizar a venda: {e}")
+
+    def cancelar_venda(self):
+        if messagebox.askyesno("Confirmação", "Tem certeza que deseja cancelar a venda atual?"):
+            self.current_sale_items = []
+            self.update_current_sale_tree()
+            messagebox.showinfo("Informação", "Venda cancelada.")
+
+    def load_historico_vendas_to_tree(self):
+        for i in self.historico_vendas_tree.get_children():
+            self.historico_vendas_tree.delete(i)
+        vendas = self.venda_service.get_vendas()
+        for v in vendas:
+            self.historico_vendas_tree.insert("", "end", values=(v.id, v.data_hora.strftime("%Y-%m-%d %H:%M:%S"), f"{v.total_venda:.2f}"))
+
+    def create_estoque_tab(self, parent_frame):
+        # Frame para movimentação de estoque
+        input_frame = ttk.LabelFrame(parent_frame, text="Movimentação de Estoque")
+        input_frame.pack(pady=10, padx=10, fill="x")
+
+        ttk.Label(input_frame, text="ID Produto:").grid(row=0, column=0, padx=5, pady=2, sticky="w")
+        self.estoque_produto_id_entry = ttk.Entry(input_frame)
+        self.estoque_produto_id_entry.grid(row=0, column=1, padx=5, pady=2, sticky="ew")
+
+        ttk.Label(input_frame, text="Quantidade:").grid(row=1, column=0, padx=5, pady=2, sticky="w")
+        self.estoque_quantidade_entry = ttk.Entry(input_frame)
+        self.estoque_quantidade_entry.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
+
+        ttk.Label(input_frame, text="Tipo (entrada/saída):").grid(row=2, column=0, padx=5, pady=2, sticky="w")
+        self.estoque_tipo_var = tk.StringVar(value="entrada")
+        ttk.Radiobutton(input_frame, text="Entrada", variable=self.estoque_tipo_var, value="entrada").grid(row=2, column=1, sticky="w")
+        ttk.Radiobutton(input_frame, text="Saída", variable=self.estoque_tipo_var, value="saida").grid(row=2, column=1, padx=70, sticky="w")
+
+        ttk.Label(input_frame, text="Observação:").grid(row=3, column=0, padx=5, pady=2, sticky="w")
+        self.estoque_observacao_entry = ttk.Entry(input_frame)
+        self.estoque_observacao_entry.grid(row=3, column=1, padx=5, pady=2, sticky="ew")
+
+        ttk.Button(input_frame, text="Registrar Movimentação", command=self.registrar_movimentacao_estoque_gui).grid(row=4, column=0, columnspan=2, pady=10)
+
+        # Treeview para histórico de movimentações
+        historico_mov_frame = ttk.LabelFrame(parent_frame, text="Histórico de Movimentações de Estoque")
+        historico_mov_frame.pack(pady=10, padx=10, fill="both", expand=True)
+
+        self.movimentacoes_tree = ttk.Treeview(historico_mov_frame, columns=("ID", "Produto", "Tipo", "Quantidade", "Data/Hora", "Observação"), show="headings")
+        self.movimentacoes_tree.pack(fill="both", expand=True)
+
+        for col in self.movimentacoes_tree["columns"]:
+            self.movimentacoes_tree.heading(col, text=col)
+            self.movimentacoes_tree.column(col, width=100, anchor="center")
+        
+        self.movimentacoes_tree.column("ID", width=50)
+        self.movimentacoes_tree.column("Produto", width=150)
+        self.movimentacoes_tree.column("Data/Hora", width=150)
+        self.movimentacoes_tree.column("Observação", width=200)
+
+        self.load_movimentacoes_to_tree()
+
+    def registrar_movimentacao_estoque_gui(self):
+        produto_id_str = self.estoque_produto_id_entry.get()
+        quantidade_str = self.estoque_quantidade_entry.get()
+        tipo = self.estoque_tipo_var.get()
+        observacao = self.estoque_observacao_entry.get() or None
+
+        if not produto_id_str or not quantidade_str:
+            messagebox.showwarning("Aviso", "Preencha o ID do Produto e a Quantidade.")
+            return
+
+        try:
+            produto_id = int(produto_id_str)
+            quantidade = int(quantidade_str)
+            if quantidade <= 0:
+                raise ValueError("Quantidade deve ser maior que zero.")
+            
+            self.produto_service.registrar_movimentacao_estoque(produto_id, tipo, quantidade, observacao)
+            messagebox.showinfo("Sucesso", "Movimentação de estoque registrada com sucesso!")
+            self.estoque_produto_id_entry.delete(0, tk.END)
+            self.estoque_quantidade_entry.delete(0, tk.END)
+            self.estoque_observacao_entry.delete(0, tk.END)
+            self.load_movimentacoes_to_tree()
+            self.load_products_to_tree() # Atualizar estoque na aba de produtos
+        except ValueError as e:
+            messagebox.showerror("Erro de Validação", str(e))
+        except Exception as e:
+            messagebox.showerror("Erro", f"Ocorreu um erro: {e}")
+
+    def load_movimentacoes_to_tree(self):
+        for i in self.movimentacoes_tree.get_children():
+            self.movimentacoes_tree.delete(i)
+        
+        # Precisa de um método para buscar movimentações no ProdutoService ou criar um MovimentacaoService
+        # Por simplicidade, vamos buscar todos os produtos e suas movimentações
+        produtos = self.produto_service.get_produtos()
+        for p in produtos:
+            for mov in p.movimentacoes:
+                self.movimentacoes_tree.insert("", "end", values=(
+                    mov.id,
+                    p.nome,
+                    mov.tipo,
+                    mov.quantidade,
+                    mov.data_hora.strftime("%Y-%m-%d %H:%M:%S"),
+                    mov.observacao
+                ))
+
+    def create_financeiro_tab(self, parent_frame):
+        # Frame para registrar transação manual
+        input_frame = ttk.LabelFrame(parent_frame, text="Registrar Transação Manual")
+        input_frame.pack(pady=10, padx=10, fill="x")
+
+        ttk.Label(input_frame, text="Tipo (receita/despesa):").grid(row=0, column=0, padx=5, pady=2, sticky="w")
+        self.financeiro_tipo_var = tk.StringVar(value="receita")
+        ttk.Radiobutton(input_frame, text="Receita", variable=self.financeiro_tipo_var, value="receita").grid(row=0, column=1, sticky="w")
+        ttk.Radiobutton(input_frame, text="Despesa", variable=self.financeiro_tipo_var, value="despesa").grid(row=0, column=1, padx=70, sticky="w")
+
+        ttk.Label(input_frame, text="Valor:").grid(row=1, column=0, padx=5, pady=2, sticky="w")
+        self.financeiro_valor_entry = ttk.Entry(input_frame)
+        self.financeiro_valor_entry.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
+
+        ttk.Label(input_frame, text="Descrição:").grid(row=2, column=0, padx=5, pady=2, sticky="w")
+        self.financeiro_descricao_entry = ttk.Entry(input_frame)
+        self.financeiro_descricao_entry.grid(row=2, column=1, padx=5, pady=2, sticky="ew")
+
+        ttk.Button(input_frame, text="Registrar Transação", command=self.registrar_transacao_gui).grid(row=3, column=0, columnspan=2, pady=10)
+
+        # Frame para fluxo de caixa
+        fluxo_caixa_frame = ttk.LabelFrame(parent_frame, text="Fluxo de Caixa")
+        fluxo_caixa_frame.pack(pady=10, padx=10, fill="both", expand=True)
+
+        self.fluxo_caixa_tree = ttk.Treeview(fluxo_caixa_frame, columns=("ID", "Tipo", "Valor", "Descrição", "Data/Hora"), show="headings")
+        self.fluxo_caixa_tree.pack(fill="both", expand=True)
+
+        for col in self.fluxo_caixa_tree["columns"]:
+            self.fluxo_caixa_tree.heading(col, text=col)
+            self.fluxo_caixa_tree.column(col, width=100, anchor="center")
+        
+        self.fluxo_caixa_tree.column("ID", width=50)
+        self.fluxo_caixa_tree.column("Valor", width=100)
+        self.fluxo_caixa_tree.column("Descrição", width=200)
+        self.fluxo_caixa_tree.column("Data/Hora", width=150)
+
+        self.total_receitas_label = ttk.Label(fluxo_caixa_frame, text="Total Receitas: R$ 0.00", font=("Arial", 12))
+        self.total_receitas_label.pack(pady=5, anchor="w")
+        self.total_despesas_label = ttk.Label(fluxo_caixa_frame, text="Total Despesas: R$ 0.00", font=("Arial", 12))
+        self.total_despesas_label.pack(pady=2, anchor="w")
+        self.saldo_final_label = ttk.Label(fluxo_caixa_frame, text="Saldo Final: R$ 0.00", font=("Arial", 12, "bold"))
+        self.saldo_final_label.pack(pady=5, anchor="w")
+
+        self.load_fluxo_caixa_to_tree()
+
+    def registrar_transacao_gui(self):
+        tipo = self.financeiro_tipo_var.get()
+        valor_str = self.financeiro_valor_entry.get()
+        descricao = self.financeiro_descricao_entry.get() or None
+
+        if not valor_str:
+            messagebox.showwarning("Aviso", "Preencha o Valor da transação.")
+            return
+        
+        try:
+            valor = float(valor_str)
+            if valor <= 0:
+                raise ValueError("Valor deve ser maior que zero.")
+            
+            self.financeiro_service.registrar_transacao(tipo, valor, descricao)
+            messagebox.showinfo("Sucesso", "Transação financeira registrada com sucesso!")
+            self.financeiro_valor_entry.delete(0, tk.END)
+            self.financeiro_descricao_entry.delete(0, tk.END)
+            self.load_fluxo_caixa_to_tree()
+        except ValueError as e:
+            messagebox.showerror("Erro de Validação", str(e))
+        except Exception as e:
+            messagebox.showerror("Erro", f"Ocorreu um erro: {e}")
+
+    def load_fluxo_caixa_to_tree(self):
+        for i in self.fluxo_caixa_tree.get_children():
+            self.fluxo_caixa_tree.delete(i)
+        
+        transacoes = self.financeiro_service.get_transacoes()
+        total_receitas = 0.0
+        total_despesas = 0.0
+
+        for t in transacoes:
+            self.fluxo_caixa_tree.insert("", "end", values=(
+                t.id,
+                t.tipo.capitalize(),
+                f"{t.valor:.2f}",
+                t.descricao,
+                t.data_hora.strftime("%Y-%m-%d %H:%M:%S")
+            ))
+            if t.tipo == "receita":
+                total_receitas += t.valor
+            else:
+                total_despesas += t.valor
+        
+        self.total_receitas_label.config(text=f"Total Receitas: R$ {total_receitas:.2f}")
+        self.total_despesas_label.config(text=f"Total Despesas: R$ {total_despesas:.2f}")
+        self.saldo_final_label.config(text=f"Saldo Final: R$ {total_receitas - total_despesas:.2f}")
+
+    def run(self):
+        self.mainloop()
+
+if __name__ == "__main__":
+    Base.metadata.create_all(bind=engine)
+    app = MercadoApp()
+    app.run()
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
+
+DATABASE_URL = "sqlite:///./mercado.db"
+
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
